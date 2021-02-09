@@ -1,0 +1,357 @@
+---
+title: "Nicole Stats"
+author: "SZ"
+date: "24 October 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo-FALSE, warning=FALSE, include=FALSE}
+
+#Set decimal points and disable scientific notation
+options(digits=3, scipen=999) 
+source("functions/AnalysisFunctions.R")
+source("functions/preloadDataNicole.R")
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+preloadPackages()
+```
+
+```{r inputdata , include=FALSE, echo=FALSE}
+setwd("C:/Users/jc783815/Desktop/SHWork/NicolePaper/Rstats_Reviewer")
+paths = "C:/Users/jc783815/Desktop/SHWork/NicolePaper/Rstats_Reviewer"
+#source( "indirectMLM.R" )
+dataRaw <- read.csv("Stats/HAPPE_participant_level_matrix_35_R150_bins.csv", header=FALSE, stringsAsFactors = FALSE)
+dataStats<-genData(dataRaw)
+dataF<-preloadDataBins(dataStats)
+#summarise statisticsma
+plevelAll <- dataF %>% group_by(ID,group,Hemi,hand,Bin) %>%
+                    dplyr::summarise(meanRT  = mean(RT, na.rm=TRUE),
+                              #meanACC = mean(Accuracy,na.rm=TRUE),
+                              #meanN2pcpeak = mean(N2pcpeak,na.rm=TRUE),
+                              #meanN2cpeak = mean(N2cpeak,na.rm=TRUE),
+                              #meanN2ipeak = mean(N2ipeak,na.rm=TRUE),
+                              #meanN2cpeakZ = mean(N2cpeakZ,na.rm=TRUE),
+                              #meanN2ipeakZ =mean(N2ipeakZ,na.rm=TRUE),                          
+                              #meanN2cLatency = mean(N2cLatency,na.rm=TRUE),
+                              #meanN2iLatency = mean(N2iLatency,na.rm=TRUE),
+                              #meanN2pcLatency = mean(N2pcLatency,na.rm=TRUE),                                           
+                              #meanfalseAlarm = mean(falseAlarm, na.rm=TRUE),
+                              #meanCPPrslope = mean(CPPr_slope,na.rm=TRUE),
+                              meanCPPslope = mean(CPPslope,na.rm=TRUE),
+                              meanCPPpeakTime = mean(CPPpeakTime,na.rm=TRUE),
+                              #meanCPPslopeLate = mean(CPPslopeLate,na.rm=TRUE),
+                              #meanCPPrslopeEarly = mean(CPPrslopeEarly,na.rm=TRUE),
+                              #meanCPPrslopeLate = mean(CPPrslopeLate,na.rm=TRUE),                              
+                              meanCPPlevel = mean(CPPlevel,na.rm=TRUE),
+                              meanCPPonset = mean(CPPonset,na.rm=TRUE),
+                              meanBetacSlope = mean(BetacSlope,na.rm=TRUE),
+                              meanBetacLevel = mean(Betacamp,na.rm=TRUE),
+                              #meanBetacOnset= mean(BetacOnset,na.rm=TRUE),
+                              #meanBetaISlope = mean(BetaiSlope,na.rm=TRUE),
+                              #meanBetaILevel = mean(Betaiamp,na.rm=TRUE),
+                              #meanBetaIOnset= mean(BetaiOnset,na.rm=TRUE),
+                              
+                              #meanpreAlpha = mean(preAlpha,na.rm=TRUE),
+                              #meanpreAlphaL = mean(preAlphaL,na.rm=TRUE),
+                              #meanpreAlphaR = mean(preAlphaR,na.rm=TRUE),
+                              #meanpreAlphaasym = mean(preAlphaasym,na.rm=TRUE),
+                              
+                              #meanpostAlpha = mean(postAlpha,na.rm=TRUE),
+                              #meanpostAlphaL = mean(postAlphaL,na.rm=TRUE),
+                              #meanpostAlphaR = mean(postAlphaR,na.rm=TRUE),
+                              #meanpostAlphaasym = mean(postAlphaasym,na.rm=TRUE)               )
+)
+# median split
+dataAM<- dataF%>% filter(dataF$group=="AgeM") %>% droplevels() 
+dataRM<-dataF%>% filter(dataF$group=="ReadM")%>% droplevels()
+dataDys<-dataF%>% filter(dataF$group=="Dyslexic")%>% droplevels()
+
+
+dataAM<- dataAM %>% mutate(MediansByFactor=ave(  dataAM$RT,FUN=median)) %>% mutate(MedianSplits = factor(
+    RT>MediansByFactor, labels = c("Above", "Below")))
+
+dataRM<- dataRM %>% mutate(MediansByFactor=ave(  dataRM$RT,FUN=median)) %>% mutate(MedianSplits = factor(
+    RT>MediansByFactor, labels = c("Above", "Below")))
+
+dataDys<- dataDys %>% mutate(MediansByFactor=ave(  dataDys$RT,FUN=median)) %>% mutate(MedianSplits = factor(
+    RT>MediansByFactor, labels = c("Above", "Below")))
+# test for normality
+plevelALLCHH <- plevelAll %>% 
+                group_by(group)%>%
+                select("ID","group",contains("mean"))
+options(scipen=99)
+#Normality_tests(plevelALLCHH)
+```
+
+
+## Behavour (Response Times)
+```{r behaviour RTs, ,  echo=FALSE, warning=FALSE, comment=''}
+source("functions/AnalysisFunctions.R")
+source("functions/preloadDataNicole.R")
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+data<-filter(dataF, RT<1500, RT>150)
+data$log_RT<-log(data$RT) #log
+#####Z-score each participant's log_RT data ####
+data$IDbyITIbyHemifield<-interaction(data$ID, data$Hemi, data$hand)
+#calculate mean and sd 
+m <- tapply(data$log_RT,data$IDbyITIbyHemifield,mean, na.rm = T)
+s <- tapply(data$log_RT,data$IDbyITIbyHemifield,sd, na.rm = T)
+#calculate log_RT.Z and save it inside data.frame
+data$log_RT.Z <- as.numeric((data$log_RT-m[data$IDbyITIbyHemifield])/s[data$IDbyITIbyHemifield])
+#Remove trials where absolute log_RT.Z>3 (i.e. remove outlier RTs)
+#data<-data[!abs(data$log_RT.Z)>3,]
+#######################RT##################################
+colorsUsed=c(rgb(1,0,0),rgb(0,0.4,1), rgb(0.2,0.6,0.1));
+plotviolinReviewer(data=data,
+         yvar=RT,
+         xvar=group,
+         groupvar=group,
+         xlabelT="Group",
+         xlabelA=c("AM","RM","DD"),
+         ylabelT="Response Time (ms)",
+         legendlabel="Target Side",
+         colourUsed= colourUsed,
+         filename="Figures/RT_hand_hemi_reviewer.png"
+)
+
+```
+## ERPs CPP, amplitude,
+```{r CPPs ,  echo=FALSE, warning=FALSE, comment=''}
+source("functions/AnalysisFunctions.R")
+source("functions/preloadDataNicole.R")
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+colorsUsed=c(rgb(1,0.6,0.2),rgb(0.6,0,1));
+plotviolinReviewerCPP(data=plevelAll,
+         yvar=meanCPPlevel,
+         xvar=hand,
+         xlabelA=c("Left","Right"),
+         groupvar=hand,
+         xlabelT="Hand",
+         ylabelT="CPP Amplitude (\u03BCV)",
+         legendlabel="Target Side",
+         colourUsed= colourUsed,
+         filename="Figures/CPP_hand_reviewer.png"
+)
+colorsUsed=c(rgb(1,0,0),rgb(0,0.4,1), rgb(0.2,0.6,0.1));
+plotviolinReviewer(data=plevelAll,
+         yvar=meanCPPlevel,
+         xvar=group,
+         groupvar=group,
+         xlabelT="Group",
+         xlabelA=c("AM","RM","DD"),
+         ylabelT="CPP Amplitude (\u03BCV)",
+         legendlabel="Target Side",
+         colourUsed= colourUsed,
+         filename="Figures/CPP_hand_hemi_reviewer.png"
+)
+```
+```{r CPPs slopes ,  echo=FALSE, warning=FALSE, comment=''}
+source("functions/AnalysisFunctions.R")
+source("functions/preloadDataNicole.R")
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+getStatsBin(data=plevelAll,
+         ID=ID,
+         group=group,
+         hand=hand,
+         Hemi=Hemi,
+         Bin = Bin,
+         test_var=meanCPPslope)
+
+getStatsBin(data=plevelAll,
+         ID=ID,
+         group=group,
+         hand=hand,
+         Hemi=Hemi,
+         Bin = Bin,
+         test_var=meanCPPlevel)
+```
+## Reviewer 2 AM,RM Dys median split
+```{r test for Beta amplitude at response, echo=FALSE, warning=FALSE, comment=''}
+source("functions/AnalysisFunctions.R")
+source("functions/preloadDataNicole.R")
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+colorsUsed=c(rgb(1,0.6,0.2),rgb(0.6,0,1));
+plotviolinReviewerBeta(data=plevelAll,
+         yvar=meanBetacSlope,
+         xvar=hand,
+         xlabelA=c("Left","Right"),
+         groupvar=hand,
+         xlabelT="Hand",
+         ylabelT="Beta Slope (\u03BCV/ms)",
+         legendlabel="Target Side",
+         colourUsed= colourUsed,
+         filename="Figures/Beta_hand_reviewer.png"
+)
+```
+```{r}
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanBetacLevel)
+plotfigureDDM(data=plevelAll,
+         yvar=meanBetacLevel,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="Beta Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/BetaAmplitude.png"
+)
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanBetacSlope)
+plotfigureDDM(data=plevelAll,
+         yvar=meanBetacSlope,
+         xvar=hand,
+         groupvar=hand,
+         xlabelT="Groups",
+         ylabelT="Beta Slope",
+         legendlabel="Target Side",
+         filename="Figures/BetaAmplitude.png"
+)
+knit_exit()# exit here
+```
+## N2c  amplitude, latency
+```{r N2c amplitude and latency, echo=FALSE, warning=FALSE, comment=''}
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanN2cpeak)
+plotfigureDDM(data=plevelAll,
+         yvar=meanN2cpeak,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="N2c Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/N2cAmplitude.png"
+)
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanN2cLatency)
+plotfigureDDM(data=plevelAll,
+         yvar=meanN2cLatency,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="N2c Latency",
+         legendlabel="Target Side",
+         filename="Figures/N2cLatency.png"
+)
+```
+## N2i amplitude and latency
+```{r N2i amplitude and latency}
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanN2ipeak)
+plotfigureDDM(data=plevelAll,
+         yvar=meanN2ipeak,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="N2i Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/N2iAmplitude.png"
+)
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanN2iLatency)
+plotfigureDDM(data=plevelAll,
+         yvar=meanN2iLatency,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="N2i Latency",
+         legendlabel="Target Side",
+         filename="Figures/N2iLatency.png"
+)
+```
+## N2c and N2i together
+```{r N2c i amplitude and latency}
+source("functions/statsAnalysisNicole.R")
+source("functions/plotfigureDDM.R")
+ciData<-getciStats(data=plevelAll,
+           ID=ID,
+           group=group,
+           hand=hand,
+           Hemi=Hemi,
+           test_var_contra=meanN2cpeak,
+           test_var_ipsi = meanN2ipeak
+           )
+plotviolin(data=ciData,
+         yvar=meanN2,
+         xvar=group,
+         groupvar=contraipsi,
+         xlabelT="Groups",
+         ylabelT="N2 Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/N2candiAmplitudeViolin.png"
+)
+plotfigureDDM(data=ciData,
+         yvar=meanN2,
+         xvar=group,
+         groupvar=contraipsi,
+         xlabelT="Groups",
+         ylabelT="N2 Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/N2candiAmplitude.png"
+)
+```
+## Alpha pre and post
+```{r alphas}
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanpreAlpha)
+plotfigureDDM(data=plevelAll,
+         yvar=meanpreAlpha,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="Alpha Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/preAlphaPower.png"
+)
+getStats(data=plevelAll,
+                         ID=ID,
+                         group=group,
+                         hand=hand,
+                         Hemi=Hemi,
+                         test_var=meanpreAlphaasym)
+plotfigureDDM(data=plevelAll,
+         yvar=meanpreAlphaasym,
+         xvar=group,
+         groupvar=Hemi,
+         xlabelT="Groups",
+         ylabelT="Alpha Amplitude",
+         legendlabel="Target Side",
+         filename="Figures/preAlphaPowerAsym.png"
+)
+
+```

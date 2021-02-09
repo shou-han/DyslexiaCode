@@ -1,0 +1,4 @@
+plot(t_pupil, squeeze(mean(ET_trials(5,:,:),3)))
+hold on
+plot(t_pupil_SZ, squeeze(mean(Pupil(5,:,:),3)))
+line([16 16],[-100 500])

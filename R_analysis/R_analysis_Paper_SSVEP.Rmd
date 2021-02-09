@@ -1,0 +1,1369 @@
+```{r libraries}
+if(!require(psych)){install.packages("psych")}
+if(!require(nlme)){install.packages("nlme")}
+if(!require(car)){install.packages("car")}
+if(!require(multcompView)){install.packages("multcompView")}
+if(!require(lsmeans)){install.packages("lsmeans")}                
+if(!require(ggplot2)){install.packages("ggplot2")}
+if(!require(rcompanion)){install.packages("rcompanion")}
+if(!require(nlme)){install.packages("nlme")}
+if(!require(lmerTest)){install.packages("lmerTest")}
+if(!require(mediation)){install.packages("mediation")}
+if(!require(R.matlab)){install.packages("R.matlab")}
+if(!require(TukeyC)){install.packages("TukeyC")}
+### Install/load required packages
+#List of R packages required for this analysis:                                                                    
+required_packages <- c("psych", "ggplot2", "tidyr", "stringr", "lubridate", "readxl","knitr",
+                       "readr", "rmarkdown", "png", "lme4", "ez", "dplyr")
+#Install required_packages:
+new.packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+#Load required_packages:
+lapply(required_packages, require, character.only = TRUE)
+
+
+#Set decimal points and disable scientific notation
+options(digits=3, scipen=999) 
+
+genData<-function(dataRaw){
+  indx = which(!is.na(dataRaw[1,]))
+  a<-dataRaw[1,!is.na(dataRaw[1,])]
+  #omit the first row
+  dataRaw = dataRaw[-1,]
+ #dataRaw[,ncol(dataRaw)]<-NULL
+  dataProc=matrix(nrow=dim(dataRaw)[1],ncol=dim(dataRaw)[2])
+  for (l in 1:ncol(a)){
+    dataProc[,l]<-as.numeric(dataRaw[,l])
+  }
+ dataAll=data.frame((dataProc),stringsAsFactors=FALSE);
+#  dataAll=dataRaw
+#   b<-t(rep(a,each=4))
+#  names(dataAll)<-b
+#  names(dataAll)<-make.unique(names(dataAll))
+  names(dataAll)<-a
+  return(dataAll)
+}
+
+nopermANOVA<-function(dataInterest,interestValue){
+    # the rest
+  distdata<- dataInterest %>% group_by(ID,distractor)%>%
+      select(ID, distractor, interestValue) %>%
+      na.omit() %>%
+      gather(key_all, dv, -ID,  -distractor)
+  # the binsdata
+  bindata<- dataInterest %>% group_by(ID,distractor,bins)%>%
+      select(ID, distractor, interestValue,bins) %>%
+      na.omit() %>%
+      gather(key_all, dv, -ID, -distractor, -bins)
+  #datapleveldist,dataplevelbin,dataplevelrest,
+  # the rest
+  resdata<- dataInterest %>% group_by(ID,distractor,bins,hand,Hemi)%>%
+      select(ID, distractor, interestValue, hand,Hemi, bins) %>%
+      na.omit() %>%
+      gather(key_all, dv, -ID, -Hemi, -distractor, -bins,-hand)
+  distractData <- ezANOVA(data = distdata
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(distractor)
+                          , within_full = .(distractor)
+                          , within_covariates = NULL
+                          , between = NULL
+                          , between_covariates = NULL
+                          , observed = NULL
+                          , type = 3)
+  allstatData  <- ezANOVA(data = resdata
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(Hemi,distractor,bins,hand)
+                          , within_full = .(Hemi,distractor,bins,hand)                         
+                          , within_covariates = NULL
+                          , between = NULL
+                          , between_covariates = NULL
+                          , observed = NULL
+                          , type = 3)
+  binData<- ezANOVA(data = bindata
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(distractor,bins)
+                          , within_full = .(distractor,bins)                    
+                          , within_covariates = NULL
+                          , between = NULL
+                          , between_covariates = NULL
+                          , observed = NULL
+                          , type = 3)
+  return(list(distractData,binData,allstatData))
+}
+
+permANOVA<-function(dataInterest,interestValue,permNo){
+        # the rest
+    distdata<- dataInterest %>% group_by(ID,group)%>%
+        select(ID, group, interestValue) %>%
+        na.omit() %>%
+        gather(key_all, dv, -ID,  -group)
+    # the binsdata
+    bindata<- dataInterest %>% group_by(ID,group,Hemi,hand)%>%
+        select(ID, group, interestValue,Hemi,hand) %>%
+        na.omit() %>%
+        gather(key_all, dv, -ID, -group, -Hemi,-hand)
+     log <- capture.output({distractData <- ezPerm(data = distdata
+                            , dv = .(dv)
+                            , wid = .(ID)
+                            , between = .(group)
+                            , perms = permNo)});
+     print('groupDone')
+     log <- capture.output({  binData <- ezPerm(data = bindata
+                              , dv = .(dv)
+                              , wid = .(ID)
+                            , within = .(Hemi,hand)
+                            , between = .(group)
+                              , perms = permNo)});
+    print('HemihandDone')
+    print('alldone')
+    return(list(distractData,binData))
+}
+
+
+# a function for calculating standard error 
+se=function(x) sqrt(var(x, na.rm=TRUE)/length(x[!is.na(x)])) 
+mediationStats<-function(dataInterest,treatsValue,mediateValue, outValue){
+  modelMed.O<-lm(as.formula(paste(outValue, "~", treatsValue)),dataInterest)
+ modelMed.M<-lm(as.formula(paste(mediateValue, "~", treatsValue)),dataInterest)
+ modelMed.Y<-lm(as.formula(paste(outValue, "~", mediateValue, "+", treatsValue)),dataInterest)
+  results<-mediate(modelMed.M,modelMed.Y,treat=paste(treatsValue),mediator=paste(mediateValue),boot=TRUE,sims=500)
+  return(list(modelMed.O,modelMed.M,modelMed.Y,summary(results),plot(results)))
+}
+
+```
+
+```{r data input}
+
+setwd("/home/szhou/ep52_scratch/Nicole_analysis/Analyses_Scripts_R")
+paths = "/home/szhou/ep52_scratch/Nicole_analysis/Analyses_Scripts_R"
+#source( "indirectMLM.R" )
+library( boot )
+dataRaw <- read.csv("Stats/participant_level_matrix_R150.csv", header=FALSE, stringsAsFactors = FALSE)
+dataStats<-genData(dataRaw)
+dataF<-dataStats
+dataF$log_RT<-log(dataF$RT) #log
+#####Z-score each participant's log_RT data ####
+dataF$IDbyITIbyHemifieldbygroup <-interaction(dataF$Subject, dataF$hemi, dataF$group)
+m <- tapply(dataF$log_RT,dataF$IDbyITIbyHemifieldbygroup,mean, na.rm = T)
+s <- tapply(dataF$log_RT,dataF$IDbyITIbyHemifieldbygroup,sd, na.rm = T)
+#calculate log_RT.Z and save it inside data.frame  
+dataF$logz1<-(dataF$log_RT-m[dataF$IDbyITIbyHemifieldbygroup])
+dataF$logz1<-s[dataF$IDbyITIbyHemifieldbygroup]
+dataF$log_RT.Z <- (dataF$log_RT-m[dataF$IDbyITIbyHemifieldbygroup])/s[dataF$IDbyITIbyHemifieldbygroup]
+#Remove trials where absolute log_RT.Z>3 (i.e. remove outlier RTs)
+#dataF<-dataF[!abs(dataF$log_RT.Z)>5,]
+dataF<- dataF %>% dplyr::rename(ID=Subject,Hemi=hemi,CPPlevel = CPPampatresponse,N2cLatency=N2c_T,N2iLatency=N2i_T,N2cpeak=N2cP, N2ipeak=N2iP,CPPpeakTime=CPP_T)
+dataF<-dataF %>% #make factors
+  mutate(Hemi= ifelse(Hemi==1,"left","right"),
+         hand = ifelse(hand==1,"left","right"))%>%
+  mutate_each_(funs(factor),c("group","Hemi","ID")) #make factor
+levels(dataF$group)<-list("AgeM"="1","ReadM"="2","Dyslexic"="3")
+
+#summarise statistics
+plevelAll <- dataF %>% group_by(ID,group,Hemi,hand) %>%
+                    dplyr::summarise(meanRT  = mean(RT, na.rm=TRUE),
+                              meanACC = mean(Accuracy,na.rm=TRUE),
+                              #meanN2pcpeak = mean(N2pcpeak,na.rm=TRUE),
+                              meanN2cpeak = mean(N2cpeak,na.rm=TRUE),
+                              meanN2ipeak = mean(N2ipeak,na.rm=TRUE),
+                              #meanN2cpeakZ = mean(N2cpeakZ,na.rm=TRUE),
+                              #meanN2ipeakZ =mean(N2ipeakZ,na.rm=TRUE),                          
+                              meanN2cLatency = mean(N2cLatency,na.rm=TRUE),
+                              meanN2iLatency = mean(N2iLatency,na.rm=TRUE),
+                              #meanN2pcLatency = mean(N2pcLatency,na.rm=TRUE),                                           
+                              meanfalseAlarm = mean(falseAlarm, na.rm=TRUE),
+                              #meanCPPrslope = mean(CPPr_slope,na.rm=TRUE),
+                              meanCPPslope = mean(CPPslope,na.rm=TRUE),
+                              meanCPPpeakTime = mean(CPPpeakTime,na.rm=TRUE),
+                              #meanCPPslopeLate = mean(CPPslopeLate,na.rm=TRUE),
+                              #meanCPPrslopeEarly = mean(CPPrslopeEarly,na.rm=TRUE),
+                              #meanCPPrslopeLate = mean(CPPrslopeLate,na.rm=TRUE),                              
+                              meanCPPlevel = mean(CPPlevel,na.rm=TRUE),
+                              meanCPPonset = mean(CPPonset,na.rm=TRUE),
+                              meanBetacSlope = mean(BetacSlope,na.rm=TRUE),
+                              meanBetacLevel = mean(Betacamp,na.rm=TRUE),
+              #                meanBetacOnset= mean(BetacOnset,na.rm=TRUE),
+               #               meanBetaISlope = mean(BetaiSlope,na.rm=TRUE),
+                #              meanBetaILevel = mean(Betaiamp,na.rm=TRUE),
+                 #             meanBetaIOnset= mean(BetaiOnset,na.rm=TRUE),
+                              
+                              meanpreAlpha = mean(preAlpha,na.rm=TRUE),
+                              meanpreAlphaL = mean(preAlphaL,na.rm=TRUE),
+                              meanpreAlphaR = mean(preAlphaR,na.rm=TRUE),
+                              meanpreAlphaasym = mean(preAlphaasym,na.rm=TRUE),
+                              
+                              meanpostAlpha = mean(postAlpha,na.rm=TRUE),
+                              meanpostAlphaL = mean(postAlphaL,na.rm=TRUE),
+                              meanpostAlphaR = mean(postAlphaR,na.rm=TRUE),
+                              meanpostAlphaasym = mean(postAlphaasym,na.rm=TRUE),   
+                              
+                             # meanpostAlpharesp = mean(postAlpharesp,na.rm=TRUE),
+                            #  meanpostAlpharespL = mean(postAlphaLresp,na.rm=TRUE),
+                            #  meanpostAlpharespR = mean(postAlphaRresp,na.rm=TRUE),
+                            # meanpostAlpharespasym = mean(postAlphaasymresp,na.rm=TRUE),   
+                              
+                              )
+
+plevelALLCHH <- plevelAll %>% 
+                group_by(group)%>%
+                select("ID","group",contains("mean"))
+#a1<-plevelALLCHH%>% filter(distractor==1)
+#b1<-plevelALLCHH%>% filter(distractor==2)
+#normalityData<-merge(a1,b1,by=c("ID"), by.x="ID",by.y="ID",suffixes=c("_nd","_d"))
+# test for normality
+options(scipen=99)
+Normality_tests <-plevelALLCHH %>%ungroup()%>%
+  select("ID","group",contains("mean"))%>%
+                    gather(key, value,-ID,-group) %>%
+                    group_by(key)%>%
+ do(ShapiroWilk_p_value= shapiro.test(.$value)[2],
+                       Anderson_Darling_p_value = nortest::ad.test(.$value)[2], 
+                       CramerVonMises_p_value = nortest::cvm.test(.$value)[2],
+                       Shapiro_Francia_p_value = nortest::sf.test(.$value)[2],
+                       Kolmogorov_Smirnov_p_value= nortest::lillie.test(.$value)[2]) %>% 
+                    mutate(ShapiroWilk_p_value= unlist(ShapiroWilk_p_value),
+                       Anderson_Darling_p_value = unlist(Anderson_Darling_p_value), 
+                       CramerVonMises_p_value = unlist(CramerVonMises_p_value),
+                       Shapiro_Francia_p_value = unlist(Shapiro_Francia_p_value),
+                       Kolmogorov_Smirnov_p_value = unlist(Kolmogorov_Smirnov_p_value)) %>% 
+                    mutate(average_p_value=(ShapiroWilk_p_value + 
+                                                Anderson_Darling_p_value + 
+                                                CramerVonMises_p_value + 
+                                                Shapiro_Francia_p_value + 
+                                                Kolmogorov_Smirnov_p_value)/5) %>% arrange(average_p_value)
+kable(Normality_tests,
+    format.args = list(big.mark = ","), digits=4,
+  
+      caption="Normality tests")
+```
+
+
+```{r behaviour RTs}
+data<-filter(dataF, RT<1500, RT>150)
+
+data$log_RT<-log(data$RT) #log
+#####Z-score each participant's log_RT data ####
+data$IDbyITIbyHemifield<-interaction(data$ID, data$Hemi, data$hand)
+#calculate mean and sd 
+m <- tapply(data$log_RT,data$IDbyITIbyHemifield,mean, na.rm = T)
+s <- tapply(data$log_RT,data$IDbyITIbyHemifield,sd, na.rm = T)
+#calculate log_RT.Z and save it inside data.frame
+data$log_RT.Z <- as.numeric((data$log_RT-m[data$IDbyITIbyHemifield])/s[data$IDbyITIbyHemifield])
+#Remove trials where absolute log_RT.Z>3 (i.e. remove outlier RTs)
+#data<-data[!abs(data$log_RT.Z)>3,]
+#######################RT##################################
+Speed_checker <- data %>% group_by(ID,group,Hemi,hand) %>%
+                    summarise(meanRTZ  = mean(RT , na.rm=TRUE))
+summary(Speed_checker)
+
+perRT <- ezPerm(data = data.frame(Speed_checker)
+                      , dv = .(meanRTZ)
+                      , wid = .(ID)
+                      , within = .(hand,Hemi)
+                      , between=.(group)
+                      , perms = 1);
+print("Factorial Permutation test for the effect of distractor on RT:")
+print(perRT);
+
+pairwise.t.test(data.frame(Speed_checker)$meanRTZ,data.frame(Speed_checker)$Hemi,p.adjust.method="bonf")
+pairwise.t.test(data.frame(Speed_checker)$meanRTZ,data.frame(Speed_checker)$group,p.adjust.method="bonf")
+```
+```{r plot RTs}
+# summarise the statistics
+finalSpeedChecker<-data%>% group_by(ID,group,Hemi,hand) %>%
+                    summarise(meanRTZ  = mean(RT, na.rm=TRUE), stdRT = se(RT))
+SpeedAllID<-data%>% group_by(group,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(RT, na.rm=TRUE), stdRT = se(RT))
+png('Figure/RT_zplot_group_Hemi.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+    facet_grid(~hand, labeller = "label_both")+  
+    geom_point() +
+    xlab("Group") + ylab("Response Time (RT, ms)") +
+    theme(axis.title.x = element_text(face="bold", size=18),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=18),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          panel.background = element_blank())+
+          labs(color="Target Side")
+    #scale_x_discrete(labels=c("Left", "Right"))
+
+plotSpeed  
+dev.off()
+```
+```{r falseAlarmStats}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,meanfalseAlarm, hand) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-Hemi, -hand) 
+
+falsealarmPerm<- permANOVA(plevelAll,'meanfalseAlarm',1)
+print("Permutation Repeated Measures ANOVA  for false alarm:")
+print(falsealarmPerm)
+
+falseAlarm_anova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within=.(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of false Alarm at response:")
+print(falseAlarm_anova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
+```{r plot falseAlarm}
+# summarise the statistics
+finalSpeedChecker<-data%>% group_by(ID,group,Hemi,hand) %>%
+                    summarise(meanRTZ  = mean(RT, na.rm=TRUE), stdRT = se(RT))
+SpeedAllID<-data%>% group_by(group,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(RT, na.rm=TRUE), stdRT = se(RT))
+png('Figure/RT_zplot_group_Hemi.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+    facet_grid(~hand, labeller = "label_both")+  
+    geom_point() +
+    xlab("Group") + ylab("Response Time (RT, ms)") +
+    theme(axis.title.x = element_text(face="bold", size=18),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=18),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          panel.background = element_blank())+
+          labs(color="Target Side")
+    #scale_x_discrete(labels=c("Left", "Right"))
+
+plotSpeed  
+dev.off()
+```
+
+```{r}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,meanCPPlevel, hand) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-Hemi, -hand) 
+
+cppLevelPerm<- permANOVA(plevelAll,'meanCPPlevel',1)
+print("Permutation Repeated Measures ANOVA  for CPP amplitude at response:")
+print(cppLevelPerm)
+
+cppLevelPerm_anova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of CPP amplitude at response:")
+print(cppLevelPerm_anova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
+
+
+
+
+```{r cpp amplitude plots}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanCPPlevel) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanCPPlevel) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,hand,group) %>%
+  summarise(meanRTZ  = mean(meanCPPlevel, na.rm=TRUE), stdRT = se(meanCPPlevel))
+png('Figure/cppAmplitudeGrouphand.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+      facet_grid(~hand, labeller = "label_both")+  
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("cpp amplitude (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+```{r}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanCPPpeakTime) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-Hemi,-hand) 
+
+cppPeakTime<- permANOVA(plevelAll,'meanCPPpeakTime',1)
+print("Permutation Repeated Measures ANOVA  for CPP peak time :")
+print(cppPeakTime)
+
+cppPeakTime_anova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of CPP peak time:")
+print(cppPeakTime_anova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
+```{r cpp peak time}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanCPPpeakTime) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanCPPpeakTime) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,hand,group) %>%
+  summarise(meanRTZ  = mean(meanCPPpeakTime, na.rm=TRUE), stdRT = se(meanCPPpeakTime))
+png('Figure/cppPeakTimeGroupHemi.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    facet_grid(~hand, labeller = "label_both")+  
+    geom_point() +  
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("Peak Time before RT (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    #scale_x_discrete(labels=c("Left","Right"))+
+    scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+```{r test for CPP slope at response}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanCPPslope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-Hemi,-hand) 
+
+cppSlopeperm<- permANOVA(plevelAll,'meanCPPslope',1)
+print("Repeated Measures ANOVA  for CPpslope:")
+print(cppSlopeperm)
+
+cppamp_anova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of CPP Slope:")
+print(cppamp_anova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+```{r cpp slope plots}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanCPPslope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanCPPslope) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,hand,group) %>%
+  summarise(meanRTZ  = mean(meanCPPslope, na.rm=TRUE), stdRT = se(meanCPPslope))
+png('Figure/cppSlopeGrouphand.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+  facet_grid(~hand, labeller = "label_both")+  
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("cpp slope (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    #scale_x_discrete(labels=c("Left","Right"))+
+    scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+```{r test for Beta amplitude at response}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanBetacLevel) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand,-Hemi) 
+
+betaAmpperm<- permANOVA(plevelAll,'meanBetacLevel',1)
+print("Repeated Measures ANOVA  for BetaAmp:")
+print(betaAmpperm)
+
+betaLevelAnova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of beta Amplitude:")
+print(betaLevelAnova);
+
+  model<-lmer(dv~group+hand+Hemi+group*hand*Hemi+(1+Hemi+hand|ID),data=data.frame(ANOVA_data), REML=TRUE)
+  print(anova(model))
+  print(emmeans(model, list(pairwise ~ group), adjust = "bonf"))
+  
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+
+
+```{r SSVEP amplitude}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanBetacLevel) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanBetacLevel) 
+SpeedAllID<-ANOVA_data%>% group_by(group) %>%
+  summarise(meanRTZ  = mean(meanBetacLevel, na.rm=TRUE), stdRT = se(meanBetacLevel))
+png('Figure/SSVEPAmp', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, group=1,) +
+    #facet_grid(~hand, labeller = "label_both")+ 
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1,color="blue")+
+    geom_line(aes(x=group, y=meanRTZ,group=1),color="blue")+
+    geom_point(color="blue") +
+    xlab("Group") + ylab(expression(paste("SSVEP Amplitude (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())
+    #scale_x_discrete(name="Group")+
+    #scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+
+```{r test for Beta slope at response}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanBetacSlope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) 
+
+betaSlopeperm<- permANOVA(plevelAll,'meanBetacSlope',2)
+print("Repeated Measures ANOVA  for meanBetarSlope:")
+print(betaSlopeperm)
+
+betaslopanova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of mean Beta Slope:")
+print(betaslopanova);
+#pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+#pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+#pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+# bonferroni corrected pairwise comparisons
+ANOVA_data2<-ANOVA_data%>%mutate(grouphemi = interaction(group,Hemi))
+aov_grouphemi<-aov(dv ~ group, data=ANOVA_data)
+pairs(emmeans(aov_grouphemi,~group),adjust="bonferroni")
+
+```
+
+```{r SSVEP slopes}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanBetacSlope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanBetacSlope) 
+SpeedAllID<-ANOVA_data%>% group_by(group) %>%
+  summarise(meanRTZ  = mean(meanBetacSlope, na.rm=TRUE), stdRT = se(meanBetacSlope))
+png('Figure/SSVEPSlope', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, group=1,) +
+    #facet_grid(~hand, labeller = "label_both")+ 
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1,color="blue")+
+    geom_line(aes(x=group, y=meanRTZ,group=1),color="blue")+
+    geom_point(color="blue") +
+    xlab("Group") + ylab(expression(paste("SSVEP Slope (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())
+    #scale_x_discrete(name="Group")+
+    #scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+```{r SSVEP slopes}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanBetacSlope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanBetacSlope) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,hand,group) %>%
+  summarise(meanRTZ  = mean(meanBetacSlope, na.rm=TRUE), stdRT = se(meanBetacSlope))
+png('Figure/betaHand.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi) +
+    facet_grid(~hand, labeller = "label_both")+   
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi))+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("betaslopes (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=15),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12),
+          axis.title.y = element_text(face="bold", size=15),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    #scale_x_discrete(labels=c("Left","Right"))+
+    scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+
+```{r test for betac and betai together}
+# Peaks
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanBetacSlope,meanBetaISlope) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) %>%
+    mutate(contraipsi = ifelse(key=="meanBetacSlope","b2c","b2i"))%>%
+  mutate_each_(funs(factor),c("contraipsi")) #make factor
+
+betaSlopePerm <- ezPerm(data = ANOVA_data
+                            , dv = .(dv)
+                            , wid = .(ID)
+                            , within = .(Hemi,contraipsi,hand)
+                            , between = .(group)
+                            , perms = 1);
+print("Repeated Measures ANOVA  for the effect of distractor on Betac and Betai")
+print(betaSlopePerm);
+
+betaSlopeANOVA <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,contraipsi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for the effect of distractor on Betac and Betai")
+print(betaSlopeANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$contraipsi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
+
+```{r plot betaci together}
+# N2 contralateral and ipsilateral together
+SpeedAllID<-ANOVA_data%>% group_by(group,contraipsi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/beta_ci.png', width = 400, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=contraipsi))+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="groups")+
+    scale_color_discrete((name="Waveform"))
+plotSpeed 
+dev.off()
+
+# beta group by contraipsi by hand
+SpeedAllID<-ANOVA_data%>% group_by(hand,contraipsi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/beta_group_hand_contraipsi.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=hand, y=meanRTZ, color=contraipsi, group=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=hand, y=meanRTZ,group=contraipsi, color=contraipsi))+
+    #facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("Beta slopes (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="hand")+
+    scale_color_discrete((name="contraipsi"))
+plotSpeed 
+dev.off()
+
+# betaci and hand and hemi
+SpeedAllID<-ANOVA_data%>% group_by(hand,Hemi,contraipsi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/beta_ci_hand_hemi.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=Hemi, y=meanRTZ, color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=Hemi, y=meanRTZ,group=contraipsi))+
+    facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Target Side")+
+    scale_color_discrete((name="Waveform"))
+plotSpeed 
+dev.off()
+
+# betaci group by hemi by contraipsi by hand
+SpeedAllID<-ANOVA_data%>% group_by(group,contraipsi,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/beta_ci_hand_hemi_group.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=hand, y=meanRTZ,color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=hand, y=meanRTZ, group=contraipsi:Hemi, color=contraipsi, linetype=Hemi))+
+    geom_point() +
+    facet_grid(~group, labeller = "label_both")+
+    xlab("Hand") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Hand")+
+    scale_color_discrete((name="Waveform"))+
+    scale_linetype((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+
+```{r N2c}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2cpeak) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) 
+
+N2cpeakPerm<- permANOVA(plevelAll,'meanN2cpeak',1)
+print("Repeated Measures ANOVA  for meanN2cpeak:")
+print(N2cpeakPerm)
+
+n2cPeakAnova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of mean N2c Peak:")
+print(n2cPeakAnova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+```{r N2cpeakPlots}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2cpeak) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanN2cpeak) 
+SpeedAllID<-ANOVA_data%>% group_by(hand,group) %>%
+  summarise(meanRTZ  = mean(meanN2cpeak, na.rm=TRUE), stdRT = se(meanN2cpeak))
+png('Figure/N2cPeakGraph.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=hand, y=meanRTZ, color=group) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=hand, y=meanRTZ,group=group))+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2cpeak (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="hand")+
+    scale_color_discrete((name="group"))
+plotSpeed 
+#
+dev.off()
+```
+```{r N2i}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2ipeak) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) 
+
+N2cpeakPerm<- permANOVA(plevelAll,'meanN2ipeak',2)
+print("Repeated Measures ANOVA  for meanN2ipeak:")
+print(N2cpeakPerm)
+
+n2cPeakAnova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of mean N2i Peak:")
+print(n2cPeakAnova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+```{r N2ipeakPlots}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2ipeak) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanN2ipeak) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,group) %>%
+  summarise(meanRTZ  = mean(meanN2ipeak, na.rm=TRUE), stdRT = se(meanN2ipeak))
+png('Figure/N2iPeakGraph.png', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=Hemi, y=meanRTZ, color=group) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=Hemi, y=meanRTZ,group=group))+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2ipeak (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Hemi")+
+    scale_color_discrete((name="group"))
+plotSpeed 
+#dev.off()
+```
+
+```{r N2c latencies}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2cLatency) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) 
+
+N2cpeakPerm<- permANOVA(plevelAll,'meanN2cLatency',2)
+print("Repeated Measures ANOVA  for meanN2cLatency:")
+print(N2cpeakPerm)
+
+n2cPeakAnova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of mean N2c Latency:")
+print(n2cPeakAnova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+```{r N2clatency}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2cLatency) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanN2cLatency) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,group,hand) %>%
+  summarise(meanRTZ  = mean(meanN2cLatency, na.rm=TRUE), stdRT = se(meanN2cLatency))
+png('Figure/N2cLatencyHemiHandGroup.jpg', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=Hemi, y=meanRTZ, color=group) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=Hemi, y=meanRTZ, group=group, color=group))+
+    geom_point() +
+    facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2cLatency (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Target Side")+
+    scale_color_discrete((name="group"))
+plotSpeed 
+dev.off()
+```
+```{r N2i latencies}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2iLatency) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) 
+
+N2cpeakPerm<- permANOVA(plevelAll,'meanN2iLatency',2)
+print("Repeated Measures ANOVA  for meanN2iLatency:")
+print(N2cpeakPerm)
+
+n2cPeakAnova <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of mean N2i Latency:")
+print(n2cPeakAnova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$hand,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+```
+
+```{r N2ilatency}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2iLatency) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi,-meanN2iLatency) 
+SpeedAllID<-ANOVA_data%>% group_by(Hemi,group,hand) %>%
+  summarise(meanRTZ  = mean(meanN2iLatency, na.rm=TRUE), stdRT = se(meanN2iLatency))
+png('Figure/N2iLatencyHemiHandGroup.jpg', width = 640, heigh=480, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=Hemi, y=meanRTZ, color=group) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=Hemi, y=meanRTZ, group=group, color=group))+
+    geom_point() +
+    facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2iLatency (", mu, "V/ms)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Target Side")+
+    scale_color_discrete((name="group"))
+plotSpeed 
+dev.off()
+```
+```{r test for N2c and N2i peaks together}
+# Peaks
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanN2cpeak,meanN2ipeak) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi) %>%
+    mutate(contraipsi = ifelse(key=="meanN2cpeak","N2c","N2i"))%>%
+  mutate_each_(funs(factor),c("contraipsi")) #make factor
+
+N2cpeakPerm <- ezPerm(data = ANOVA_data
+                            , dv = .(dv)
+                            , wid = .(ID)
+                            , within = .(Hemi,contraipsi,hand)
+                            , between = .(group)
+                            , perms = 1);
+print("Repeated Measures ANOVA  for the effect of distractor on N2c and N2i:")
+print(N2cpeakPerm);
+
+N2cN2i_ANOVA <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,contraipsi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for the effect of distractor on N2c and N2i peaks:")
+print(N2cN2i_ANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$contraipsi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
+
+```{r N2citogether}
+## plotting them
+# violin graphs 
+png('n2cn2idist.png',width=400,heigh=350, units="px")
+ANOVA_dataPlot<-ANOVA_data%>% group_by(ID,group,contraipsi) %>%
+                    summarise(meanN2 = mean(dv, na.rm=TRUE), stdN2 = se(dv))
+
+
+
+plotN2Ni <- ANOVA_dataPlot %>% ggplot()+aes(x=group, y=meanN2, color=contraipsi) +
+      geom_violin() +
+    geom_boxplot(alpha=0.1) +
+    geom_point() +
+    xlab("Distractor") + ylab("N2Peaks (-/muV)") +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="groups")
+plotN2Ni  
+```
+
+```{r plot N2ci together}
+# N2 contralateral and ipsilateral together
+SpeedAllID<-ANOVA_data%>% group_by(group,contraipsi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/N2_ci.png', width = 400, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=contraipsi))+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="groups")+
+    scale_color_discrete((name="Waveform"))
+plotSpeed 
+dev.off()
+
+# N2 group by hemi by hand
+SpeedAllID<-ANOVA_data%>% group_by(group,hand,Hemi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/N2_group_hand_hemi.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ, color=Hemi, group=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ,group=Hemi, color=Hemi))+
+    facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Group") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="groups")+
+    scale_color_discrete((name="Target Side"))
+plotSpeed 
+dev.off()
+
+# N2ci and hand and hemi
+SpeedAllID<-ANOVA_data%>% group_by(hand,Hemi,contraipsi) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/N2_ci_hand_hemi.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=Hemi, y=meanRTZ, color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=Hemi, y=meanRTZ,group=contraipsi))+
+    facet_grid(~hand, labeller = "label_both")+
+    geom_point() +
+    xlab("Hemi") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Target Side")+
+    scale_color_discrete((name="Waveform"))
+plotSpeed 
+dev.off()
+
+# N2 group by hemi by contraipsi by hand
+SpeedAllID<-ANOVA_data%>% group_by(group,contraipsi,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(-dv, na.rm=TRUE), stdRT = se(-dv))
+png('Figure/N2_ci_hand_hemi_group.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=hand, y=meanRTZ,color=contraipsi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=hand, y=meanRTZ, group=contraipsi:Hemi, color=contraipsi, linetype=Hemi))+
+    geom_point() +
+    facet_grid(~group, labeller = "label_both")+
+    xlab("Hand") + ylab(expression(paste("N2 peaks (", mu, "V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Hand")+
+    scale_color_discrete((name="Waveform"))+
+    scale_linetype((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+```{r prealphas}
+###################################################################
+ANOVA_data<- plevelAll %>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanpreAlpha) %>%
+    na.omit() %>%
+    gather(key,dv, -ID,-group,-Hemi,-hand)
+
+
+hemialpha_ANOVA <- ezANOVA(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = (group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3);
+print("Repeated Measures ANOVA  for the effect of Hemisphere on Pre-target Alpha Power:")
+print(hemialpha_ANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+kable(ANOVA_data %>% group_by(group) %>% summarise(mean=mean(dv),sd=sd(dv)))
+##############################################################################
+```
+```{r postalphas}
+###################################################################
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi, hand,meanpostAlpha) %>%
+    na.omit() %>%
+    gather(key, dv, -ID,-group,-hand, -Hemi)
+   # mutate(contraipsi = ifelse(key=="meanpostAlpharespL","alphac","alphai"))%>%
+  #mutate_each_(funs(factor),c("contraipsi")) #make factor
+
+
+hemialpha_ANOVA <- ezANOVA(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = (group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3);
+print("Repeated Measures ANOVA  for the effect of Hemisphere on Pre-target Alpha Power:")
+print(hemialpha_ANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+kable(ANOVA_data %>% group_by(group) %>% summarise(mean=mean(dv),sd=sd(dv)))
+##############################################################################
+```
+```{r postalphas}
+log <- capture.output({
+   Hemisphere_Perm <- ezPerm(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , between = (group)
+                          , perms = 1);
+ })
+print("Factorial Permutation test for the effect of Hemisphere on Pre-target Alpha Power:")
+print(Hemisphere_Perm);
+
+p_Alpha<-ggplot(ANOVA_data, aes(group, dv, colour = group))  +
+    geom_violin() + 
+    geom_boxplot(alpha=0.1) +  
+    geom_point() +
+    xlab("Hemisphere") + ylab("Alpha Power (\u00b5V)") +
+    theme(axis.title.x = element_text(face="bold", size=12),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12), 
+          axis.title.y = element_text(face="bold", size=12),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          panel.background = element_blank()) +
+    guides(colour=FALSE) +
+    scale_x_discrete(labels=c("AM", "RM", "Dyslexic")) +
+    annotate("text", x = 0.65, y = 5, label = "[B]", size=6)
+p_Alpha
+```
+```{r alpha plot}
+ANOVA_data<- plevelAll %>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanpostAlpharespasym) %>%
+    na.omit() %>%
+    gather(key,dv, -ID,-group,-Hemi,-hand)
+
+# alpha group by hemi by contraipsi by hand
+SpeedAllID<-ANOVA_data%>% group_by(group,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(dv, na.rm=TRUE), stdRT = se(dv))
+png('Figure/Alpha_ci_hand_hemi_group.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ,color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ, group=Hemi, color=Hemi))+
+    geom_point() +
+    facet_grid(~hand, labeller = "label_both")+
+    xlab("Hand") + ylab(expression(paste("Alpha Power (\u00b5V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Group")+
+    scale_color_discrete((name="Target Side"))+
+    scale_linetype((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+
+```{r alphas asymmetry}
+###################################################################
+ANOVA_data<- plevelAll %>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanpreAlphaasym) %>%
+    na.omit() %>%
+    gather(key,dv, -ID,-group,-Hemi,-hand)
+
+
+hemialpha_ANOVA <- ezANOVA(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = (group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3);
+print("Repeated Measures ANOVA  for the effect of Hemisphere on Pre-target Alpha Asymmetry:")
+print(hemialpha_ANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+kable(ANOVA_data %>% group_by(group) %>% summarise(mean=mean(dv),sd=sd(dv)))
+```
+
+```{r alphas asymmetry}
+###################################################################
+ANOVA_data<- plevelAll %>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanpostAlpharespL) %>%
+    na.omit() %>%
+    gather(key,dv, -ID,-group,-Hemi,-hand)
+
+
+hemialpha_ANOVA <- ezANOVA(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , within_covariates = NULL
+                        , between = (group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3);
+print("Repeated Measures ANOVA  for the effect of Hemisphere on Pre-target Alpha Asymmetry:")
+print(hemialpha_ANOVA);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+
+kable(ANOVA_data %>% group_by(group) %>% summarise(mean=mean(dv),sd=sd(dv)))
+```
+```{r plots}
+
+log <- capture.output({
+   Hemisphere_Perm <- ezPerm(data = ANOVA_data
+                          , dv = .(dv)
+                          , wid = .(ID)
+                          , within = .(hand,Hemi)
+                        , between = (group)
+                          , perms = 1);
+ })
+print("Factorial Permutation test for the effect of Hemisphere on Pre-target Alpha Asymmetry:")
+print(Hemisphere_Perm);
+
+p_Alpha<-ggplot(ANOVA_data, aes(group, dv, colour = group))  +
+    geom_violin() + 
+    geom_boxplot(alpha=0.1) +  
+    geom_point() +
+    xlab("Hemisphere") + ylab("Alpha Asymmetry (\u00b5V)") +
+    theme(axis.title.x = element_text(face="bold", size=12),
+          axis.text.x  = element_text(face="bold", angle=0,  size=12), 
+          axis.title.y = element_text(face="bold", size=12),
+          axis.text.y  = element_text(face="bold", angle=0, size=12),
+          panel.background = element_blank()) +
+    guides(colour=FALSE) +
+    scale_x_discrete(labels=c("AM", "RM", "Dyslexic")) +
+    annotate("text", x = 0.65, y = 5, label = "[B]", size=6)
+p_Alpha
+```
+```{r alpha asymmetry plot}
+ANOVA_data<- plevelAll %>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanpostAlpharespasym) %>%
+    na.omit() %>%
+    gather(key,dv, -ID,-group,-Hemi,-hand)
+# alpha group by hemi by contraipsi by hand
+SpeedAllID<-ANOVA_data%>% group_by(group,Hemi,hand) %>%
+                  summarise(meanRTZ  = mean(dv, na.rm=TRUE), stdRT = se(dv))
+png('Figure/AlphaAsym_ci_hand_hemi_group.png', width = 800, heigh=350, units="px")
+plotSpeed <- SpeedAllID %>% ggplot()+aes(x=group, y=meanRTZ,color=Hemi) +
+    geom_errorbar(aes(ymin=meanRTZ-stdRT,ymax=meanRTZ+stdRT), width=0.1)+
+    geom_line(aes(x=group, y=meanRTZ, group=Hemi, color=Hemi))+
+    geom_point() +
+    facet_grid(~hand, labeller = "label_both")+
+    xlab("Hand") + ylab(expression(paste("Alpha Asymmetry (\u00b5V)"))) +
+    theme(axis.title.x = element_text(face="bold", size=20),
+          axis.text.x  = element_text(face="bold", angle=0,  size=18),
+          axis.title.y = element_text(face="bold", size=20),
+          axis.text.y  = element_text(face="bold", angle=0, size=18),
+          legend.text  =element_text(size=18),
+          legend.title = element_text(size=20),
+          panel.background = element_blank())+
+    scale_x_discrete(name="Group")+
+    scale_color_discrete((name="Target Side"))+
+    scale_linetype((name="Target Side"))
+plotSpeed 
+dev.off()
+```
+
+```{r test for CPP onset}
+ANOVA_data <- plevelAll%>% group_by(ID,group)%>%
+    select(ID,group, Hemi,hand,meanCPPonset) %>%
+    gather(key, dv, -ID,-group,-Hemi,-hand) 
+
+#cppOnsetperm<- permANOVA(plevelAll,'meanCPPonset',500)
+#print("Repeated Measures ANOVA  for CPPonset:")
+#print(cppOnsetperm)
+
+cpponset_anova1 <- ezANOVA(data = ANOVA_data
+                        , dv = .(dv)
+                        , wid = .(ID)
+                        , within = .(Hemi,hand)
+                        , within_covariates = NULL
+                        , between = .(group)
+                        , between_covariates = NULL
+                        , observed = NULL
+                        , type = 3)
+print("Repeated Measures ANOVA  for groups of CPP Onset:")
+print(cpponset_anova);
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$Hemi,p.adjust.method="bonf")
+pairwise.t.test(ANOVA_data$dv,ANOVA_data$group,p.adjust.method="bonf")
+```
