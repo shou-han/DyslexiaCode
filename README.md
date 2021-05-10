@@ -10,6 +10,7 @@ Finally, after the analysed data plots can be visualised in DylexiaGraphs.m, Dys
 
 Statistics of the extracted features of the CPP/SSVEP waveforms within hand, hemifield and bins are determiend in R_analysis. The main statistical analysis is performed in R_analysis_Paper.Rmd. The statistical analysis for SSVEP and Bins are performed in R_analysis_Paper_Bins.Rmd and R_analysis_Paper_SSVEP.Rmd respectively. 
 
-Further details of the preprocessing, analysis, the visualised plots and the statistics are found in the paper. The HAPPE protocol can be found in 
+Further details of the preprocessing, analysis, the visualised plots and the statistics are found in the paper. 
 
+The HAPPE protocol can be found in 
 Gabard-Durnam, L. J., Mendez Leal, A. S., Wilkinson, C. L., & Levin, A. R. (2018). The Harvard Automated Processing Pipeline for Electroencephalography (HAPPE): standardized processing software for developmental and high-artifact data. Frontiers in neuroscience, 12, 97.
