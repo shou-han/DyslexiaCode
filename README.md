@@ -1,5 +1,5 @@
 # DyslexiaCode
-This code is to collect and anaylse the data for the paper Stefanac, N., Zhou, SH., O'Connell, R., Spencer-Smith, M., Castles, A., Bellgrove, M. "Insufficient Evidence Accumulation in Dyslexia." 
+The codes in this folder is to collect and anaylse the data for the paper Stefanac, N., Zhou, SH., O'Connell, R., Spencer-Smith, M., Castles, A., Bellgrove, M. "Insufficient Evidence Accumulation in Dyslexia." 
 
 The data is collected using a random dots paradigm built using psychtoolbox http://psychtoolbox.org/. The code for the random dots paradigm is given in RandomContinuousDotsParadigm.m. 
 
