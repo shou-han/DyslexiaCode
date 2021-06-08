@@ -1,7 +1,9 @@
 # DyslexiaCode
-This code is to anaylse the data for the paper Stefanac, N., Zhou, SH., O'Connell, R., Spencer-Smith, M., Castles, A., Bellgrove, M. "Insufficient Evidence Accumulation in Dyslexia." 
+This code is to collect and anaylse the data for the paper Stefanac, N., Zhou, SH., O'Connell, R., Spencer-Smith, M., Castles, A., Bellgrove, M. "Insufficient Evidence Accumulation in Dyslexia." 
 
-The files are split into three folders: PreprocessHAPPE, analysisDyslexia and R_analysis.
+The data is collected using a random dots paradigm built using psychtoolbox http://psychtoolbox.org/. The code for the random dots paradigm is given in RandomContinuousDotsParadigm.m. 
+
+The analysis files are split into three folders: PreprocessHAPPE, analysisDyslexia and R_analysis.
 The PreprocessHAPPE uses the Harvard Automated Processing Pipeline for EEG (HAPPE) to preprocess the EEG data, as described in the paper. The file to use for this is runafew_HAPPE.m. After the initial preprocessing, another process is made to extract the relevant ERPs and the SSVEPs using the files runafew_after.m and runafew_after_SSVEP.m respectively. 
 
 After the preprocess, the data is analysed in analysisDyslexia. The main analysis is performed in erp_analysis_fn.m to extract the CPP waveform and its features (e.g. slope, amplitude ). Similarly, the SSVEP and the fast/slow bin analysis are performed in erp_analysis_fn_SSVEP.m and erp_analysis_fn_bins.m respectively. 
